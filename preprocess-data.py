@@ -67,12 +67,12 @@ for item in os.listdir(SEARCH_DIR):
             message['content'] = message['content'].replace('\n', '')
             message['content'] = message['content'].lower()
 
-        # Label the data as either 'user' or 'assistant' based on the sender
+        # Label the data as either 'input' or 'output' based on the sender
         for message in message_data:
             if message['sender'] == MY_NAME:
-                message['role'] = 'assistant'
+                message['role'] = 'output'
             else:
-                message['role'] = 'user'
+                message['role'] = 'input'
 
         conversation_data.append(message_data)
     # XXX For testing purposes only process the first ten conversations
@@ -82,14 +82,42 @@ for item in os.listdir(SEARCH_DIR):
 print('Data extracted and cleaned')
 
 # Format data for training with HF SFTTrainer
-# i.e. { 'messages': [{ 'role': 'user', 'content': 'Hello!' }, { 'role': 'assistant', 'content': 'Hi!' }] }
-# XXX: Could not get that to work, so instead just make a 2 column dataset,
-#      where the first column is the role and the second column is the content
-data = {'role': [], 'content': []}
+# CSV of rows with columns:
+# 'input': user message
+# 'output': bot response
+data = {'input': [], 'output': []}
 for conversation in conversation_data:
-    for message in conversation:
-        data['role'].append(message['role'])
-        data['content'].append(message['content'])
+    if len(conversation) == 0:
+        continue
+
+    # Build up all messages from one party into one big message until the other party responds
+    current_role = conversation[0]['role']
+    current_message = ''
+    for i, message in enumerate(conversation):
+        if message['role'] == current_role:
+            # Add delimiter between sub-messages
+            current_message += ' ' + message['content']
+        else:
+            data[current_role].append(current_message)
+            current_role = message['role']
+            current_message = message['content']
+
+    # If input and output are not the same length, remove the last message
+    data[current_role].append(current_message)
+    if (len(data['input']) > len(data['output'])):
+        data['input'].pop()
+    elif (len(data['output']) > len(data['input'])):
+        data['output'].pop()
+
+    ''' XXX testing
+    print('Done with one conversation')
+    print(data)
+    input()
+    '''
+
+print('Data formatted for training')
 
 dataset = Dataset.from_dict(data)
 dataset.to_csv('data.csv')
+
+print('Data saved to data.csv')
