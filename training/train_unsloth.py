@@ -75,6 +75,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def require_cuda_runtime() -> None:
+    try:
+        import torch
+    except ImportError as error:
+        raise SystemExit(
+            "PyTorch is not installed. Install the Colab/Unsloth dependencies first."
+        ) from error
+
+    if torch.cuda.is_available():
+        print(f"CUDA device: {torch.cuda.get_device_name(0)}")
+        print(f"PyTorch: {torch.__version__}")
+        return
+
+    raise SystemExit(
+        "No CUDA GPU detected. In Colab, use Runtime > Change runtime type > GPU, "
+        "then restart the runtime, reinstall dependencies, and rerun this script. "
+        f"Current PyTorch: {torch.__version__}"
+    )
+
+
 def load_source_dataset(args: argparse.Namespace):
     from datasets import load_dataset
 
@@ -237,6 +257,8 @@ def export_gguf(model, tokenizer, args: argparse.Namespace) -> None:
 def main() -> None:
     args = build_parser().parse_args()
 
+    require_cuda_runtime()
+    import unsloth  # noqa: F401
     from trl import SFTTrainer
 
     model, tokenizer = build_model(args)

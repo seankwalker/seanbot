@@ -6,6 +6,18 @@ push a GGUF model.
 
 ## Colab Setup
 
+First confirm the runtime has a CUDA GPU:
+
+```python
+import torch
+print(torch.__version__)
+print(torch.cuda.is_available())
+print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "no gpu")
+```
+
+If this prints `False`, switch to `Runtime > Change runtime type > GPU`, restart
+the runtime, and rerun setup.
+
 Install the GPU training dependencies in a Colab cell before running the script:
 
 ```bash
