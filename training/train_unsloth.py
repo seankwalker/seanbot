@@ -237,19 +237,29 @@ def build_training_args(args: argparse.Namespace):
     return TrainingArguments(**training_kwargs)
 
 
-def run_sample(model, tokenizer, prompt: str, max_new_tokens: int) -> None:
-    from transformers import TextStreamer
-    from unsloth import FastLanguageModel
+def run_sample(
+    model,
+    tokenizer,
+    prompt: str,
+    max_new_tokens: int,
+    system_message: str,
+    text_streamer_cls=None,
+    fast_language_model_cls=None,
+) -> None:
+    if text_streamer_cls is None:
+        from transformers import TextStreamer
 
-    FastLanguageModel.for_inference(model)
-    messages = [{"role": "user", "content": prompt}]
-    input_ids = tokenizer.apply_chat_template(
-        messages,
-        add_generation_prompt=True,
-        return_tensors="pt",
-    ).to("cuda")
+        text_streamer_cls = TextStreamer
+    if fast_language_model_cls is None:
+        from unsloth import FastLanguageModel
 
-    text_streamer = TextStreamer(tokenizer, skip_prompt=True)
+        fast_language_model_cls = FastLanguageModel
+
+    fast_language_model_cls.for_inference(model)
+    prompt_text = render_prompt(prompt, "", system_message)
+    input_ids = tokenizer(prompt_text, return_tensors="pt").input_ids.to("cuda")
+
+    text_streamer = text_streamer_cls(tokenizer, skip_prompt=True)
     model.generate(
         input_ids,
         streamer=text_streamer,
@@ -308,7 +318,13 @@ def main() -> None:
     trainer.train()
 
     if args.sample_prompt:
-        run_sample(model, tokenizer, args.sample_prompt, args.sample_max_new_tokens)
+        run_sample(
+            model,
+            tokenizer,
+            args.sample_prompt,
+            args.sample_max_new_tokens,
+            args.system_message,
+        )
 
     export_gguf(model, tokenizer, args)
 
