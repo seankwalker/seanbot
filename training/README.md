@@ -57,6 +57,11 @@ instead of continuing the transcript. Override it with
 `--response-end-marker "<END_RESPONSE>"`, or disable it with
 `--response-end-marker ""`.
 
+The trainer also uses completion-only loss by default: prompt/template tokens
+are context, and only assistant response tokens contribute to loss. This avoids
+teaching the model to generate follow-up `### Statement:` blocks. Use
+`--train-on-prompts` only when debugging old behavior.
+
 The default training settings are T4-oriented: `--max-seq-length 1024`,
 `--per-device-train-batch-size 1`, and `--gradient-accumulation-steps 8`.
 If an A100/L4 has headroom, increase `--max-seq-length` or per-device batch

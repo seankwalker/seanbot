@@ -10,13 +10,14 @@ DEFAULT_SYSTEM_MESSAGE = (
     "You are a 28 year old male named Sean, having a conversation with a friend"
 )
 DISABLE_RESPONSE_END_MARKER = ""
+RESPONSE_HEADER = "### Response:\n"
 
 PROMPT_TEMPLATE = """Below are some statements that have been made by the other person in a conversation with you. Write responses that appropriately respond to each message.
 
 ### Statement:
 {INPUT}
 
-### Response:
+""" + RESPONSE_HEADER + """\
 {OUTPUT}"""
 
 
@@ -31,6 +32,61 @@ class StopOnTokenSequence:
 
         tail = input_ids[0, -stop_length:].detach().cpu().tolist()
         return tail == self.stop_token_ids
+
+
+def find_last_subsequence(values: list[int], pattern: list[int]) -> int | None:
+    if not pattern or len(pattern) > len(values):
+        return None
+
+    last_start = len(values) - len(pattern)
+    for start in range(last_start, -1, -1):
+        if values[start : start + len(pattern)] == pattern:
+            return start
+
+    return None
+
+
+class CompletionOnlyDataCollator:
+    def __init__(self, tokenizer, response_headers: list[str]):
+        from transformers import DataCollatorForLanguageModeling
+
+        self.base_collator = DataCollatorForLanguageModeling(
+            tokenizer=tokenizer,
+            mlm=False,
+        )
+        self.response_header_token_ids = []
+        for header in response_headers:
+            token_ids = get_token_ids(tokenizer, header)
+            if token_ids:
+                self.response_header_token_ids.append(token_ids)
+
+    def __call__(self, features):
+        batch = self.base_collator(features)
+        input_ids = batch["input_ids"]
+        labels = batch["labels"]
+
+        for row_index in range(input_ids.shape[0]):
+            token_ids = input_ids[row_index].detach().cpu().tolist()
+            response_start = None
+            response_header_length = 0
+
+            for response_header_token_ids in self.response_header_token_ids:
+                response_start = find_last_subsequence(
+                    token_ids,
+                    response_header_token_ids,
+                )
+                if response_start is not None:
+                    response_header_length = len(response_header_token_ids)
+                    break
+
+            if response_start is None:
+                labels[row_index, :] = -100
+                continue
+
+            response_token_start = response_start + response_header_length
+            labels[row_index, :response_token_start] = -100
+
+        return batch
 
 
 def render_prompt(
@@ -169,6 +225,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--logging-steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=3407)
+    parser.add_argument(
+        "--train-on-prompts",
+        action="store_true",
+        help="Also compute loss on prompt/template tokens. Defaults to responses only.",
+    )
 
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=16)
@@ -278,6 +339,8 @@ def build_model(args: argparse.Namespace):
         dtype=None,
         load_in_4bit=args.load_in_4bit,
     )
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     model = FastLanguageModel.get_peft_model(
         model,
@@ -330,6 +393,16 @@ def build_training_args(args: argparse.Namespace):
         training_kwargs["num_train_epochs"] = args.num_train_epochs
 
     return TrainingArguments(**training_kwargs)
+
+
+def build_data_collator(tokenizer, args: argparse.Namespace):
+    if args.train_on_prompts:
+        return None
+
+    return CompletionOnlyDataCollator(
+        tokenizer,
+        response_headers=[RESPONSE_HEADER, f"\n{RESPONSE_HEADER}"],
+    )
 
 
 def run_sample(
@@ -436,6 +509,7 @@ def main() -> None:
         max_seq_length=args.max_seq_length,
         dataset_num_proc=args.dataset_num_proc,
         packing=False,
+        data_collator=build_data_collator(tokenizer, args),
         args=build_training_args(args),
     )
 

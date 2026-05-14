@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 from training.train_unsloth import (
     build_stopping_criteria,
+    find_last_subsequence,
     prepare_dataset,
     render_messages,
     render_prompt,
@@ -101,6 +102,10 @@ class PromptRenderingTests(unittest.TestCase):
         tokenizer = FakeTokenizer()
 
         self.assertIsNone(build_stopping_criteria(tokenizer, "<eos>"))
+
+    def test_find_last_subsequence_prefers_actual_response_header(self):
+        self.assertEqual(3, find_last_subsequence([1, 2, 3, 1, 2, 3], [1, 2]))
+        self.assertIsNone(find_last_subsequence([1, 2, 3], [4]))
 
     def test_run_sample_stops_and_strips_response_marker(self):
         model = MagicMock()
