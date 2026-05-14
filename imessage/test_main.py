@@ -3,12 +3,26 @@ import unittest
 
 from imessage.main import (
     Message,
+    TrainingPair,
     build_training_pairs,
+    cap_training_pairs,
     decode_attributed_body,
     fetch_messages,
     group_turns,
     is_reaction_text,
 )
+
+
+def build_training_pair(text: str):
+    return TrainingPair(
+        chat_identifier="chat-a",
+        input=text,
+        output=f"{text} response",
+        prompt_message_count=1,
+        response_message_count=1,
+        prompt_start_date=1,
+        response_start_date=2,
+    )
 
 
 class PairingTests(unittest.TestCase):
@@ -34,6 +48,18 @@ class PairingTests(unittest.TestCase):
         self.assertEqual(len(pairs), 1)
         self.assertEqual(pairs[0].input, "HEY!!!\nare you around?")
         self.assertEqual(pairs[0].output, "yeah\nwhat's up?\none more thing")
+
+    def test_cap_training_pairs_keeps_most_recent_pairs(self):
+        pairs = [
+            build_training_pair("old"),
+            build_training_pair("middle"),
+            build_training_pair("new"),
+        ]
+
+        capped, dropped = cap_training_pairs(pairs, 2)
+
+        self.assertEqual(dropped, 1)
+        self.assertEqual([pair.input for pair in capped], ["middle", "new"])
 
 
 class FetchMessageTests(unittest.TestCase):

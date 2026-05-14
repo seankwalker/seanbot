@@ -433,6 +433,16 @@ def build_training_pairs(
     return pairs, skipped_by_length
 
 
+def cap_training_pairs(
+    pairs: list[TrainingPair],
+    max_pairs: int | None,
+) -> tuple[list[TrainingPair], int]:
+    if max_pairs is None or len(pairs) <= max_pairs:
+        return pairs, 0
+
+    return pairs[-max_pairs:], len(pairs) - max_pairs
+
+
 def write_csv(pairs: list[TrainingPair], output_path: Path) -> None:
     with output_path.open("w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL)
@@ -505,6 +515,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum character length for both input and output turns.",
     )
     parser.add_argument(
+        "--max-pairs-per-chat",
+        type=int,
+        help="Maximum training pairs to export from each chat after filtering.",
+    )
+    parser.add_argument(
         "--strip-urls",
         action="store_true",
         help="Remove URLs during export. By default text style is preserved.",
@@ -538,6 +553,8 @@ def main() -> None:
         parser.error("--min-chars must be 0 or greater.")
     if args.max_chars is not None and args.max_chars < args.min_chars:
         parser.error("--max-chars must be greater than or equal to --min-chars.")
+    if args.max_pairs_per_chat is not None and args.max_pairs_per_chat < 1:
+        parser.error("--max-pairs-per-chat must be 1 or greater.")
 
     chat_identifiers = read_chat_ids(args.chat_ids, args.chat_ids_file)
     if not chat_identifiers:
@@ -559,6 +576,7 @@ def main() -> None:
         "messages": 0,
         "turns": 0,
         "pairs": 0,
+        "pairs_dropped_by_cap": 0,
         "decoded_attributed_rows": 0,
         "excluded_reaction_rows": 0,
         "skipped_decoded_reaction_rows": 0,
@@ -591,6 +609,10 @@ def main() -> None:
                 min_chars=args.min_chars,
                 max_chars=args.max_chars,
             )
+            pairs, pairs_dropped_by_cap = cap_training_pairs(
+                pairs,
+                args.max_pairs_per_chat,
+            )
 
             all_pairs.extend(pairs)
             totals["raw_rows"] += result.raw_rows
@@ -599,6 +621,7 @@ def main() -> None:
             totals["messages"] += len(messages)
             totals["turns"] += len(turns)
             totals["pairs"] += len(pairs)
+            totals["pairs_dropped_by_cap"] += pairs_dropped_by_cap
             totals["decoded_attributed_rows"] += result.decoded_attributed_rows
             totals["excluded_reaction_rows"] += result.excluded_reaction_rows
             totals["skipped_decoded_reaction_rows"] += (
@@ -616,6 +639,7 @@ def main() -> None:
                 f"{result.rows_fetched} fetched, {len(messages)} decoded messages, "
                 f"{result.skipped_decoded_reaction_rows} decoded reactions skipped, "
                 f"{len(turns)} turns, {len(pairs)} pairs"
+                f"{f', {pairs_dropped_by_cap} pairs dropped by cap' if pairs_dropped_by_cap else ''}"
             )
     finally:
         connection.close()
@@ -639,6 +663,7 @@ def main() -> None:
     print(f"Skipped undecoded attributedBody rows: {totals['skipped_undecoded_rows']}")
     print(f"Turns built: {totals['turns']}")
     print(f"Training pairs written: {totals['pairs']}")
+    print(f"Pairs dropped by per-chat cap: {totals['pairs_dropped_by_cap']}")
     print(f"Skipped empty turns/messages: {totals['skipped_empty']}")
     print(f"Skipped by length filters: {totals['skipped_by_length']}")
     print(f"CSV output: {args.output}")

@@ -55,9 +55,28 @@ uv run main.py \
 - `--db-path`: override the default `~/Library/Messages/chat.db` path.
 - `--min-date` / `--max-date`: filter by local date or ISO datetime.
 - `--min-chars` / `--max-chars`: drop turns outside a length range.
+- `--max-pairs-per-chat`: cap each chat's contribution after filtering. The
+  most recent usable pairs are kept.
 - `--strip-urls`: remove URLs while preserving the rest of the message style.
 - `--include-reactions`: keep tapbacks/reactions such as `Loved “...”`.
 - `--jsonl-output`: write chat-style JSONL records for SFT workflows.
+
+## Balancing Chats
+
+Use `--max-pairs-per-chat` when one long conversation dominates the dataset:
+
+```bash
+uv run main.py \
+  --chat-ids-file chat_ids.txt \
+  --limit 15000 \
+  --max-pairs-per-chat 1500 \
+  --output training_pairs.csv \
+  --jsonl-output training_pairs.jsonl
+```
+
+Group chats are supported by `chat_identifier`, but all non-you messages are
+grouped as the prompt side. For cleaner tone modeling, start with 1:1 chats and
+add group chats only after manually reviewing samples.
 
 ## Output Formats
 
