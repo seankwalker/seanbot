@@ -1,0 +1,8 @@
+min_version = "2024.9.5"
+
+[tools]          # pin runtimes & CLI helpers
+python = "3.12"
+uv     = "latest"
+
+[settings]       # let mise point its shimmed “python” at .venv
+python.uv_venv_auto = true

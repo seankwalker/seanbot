@@ -8,3 +8,11 @@ __pycache__/
 *.swn
 *.bak
 .DS_Store
+.env
+outputs/
+model/
+*.gguf
+chat_ids.txt
+imessage/data.csv
+training_pairs.csv
+training_pairs.jsonl

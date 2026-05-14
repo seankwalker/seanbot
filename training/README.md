@@ -1,0 +1,74 @@
+# Training
+
+This directory contains the maintainable version of the Colab fine-tuning
+workflow. It trains a LoRA adapter with Unsloth and can optionally export or
+push a GGUF model.
+
+## Colab Setup
+
+Install the GPU training dependencies in a Colab cell before running the script:
+
+```bash
+pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+pip install --no-deps "xformers<0.0.27" "trl<0.9.0" peft accelerate bitsandbytes
+```
+
+## Train From Hugging Face Dataset
+
+```bash
+python training/train_unsloth.py \
+  --dataset seankwalker/seanbot-2-imessage \
+  --max-steps 60 \
+  --output-dir outputs
+```
+
+## Train From Local Export
+
+Use the JSONL output from `imessage/main.py` when possible:
+
+```bash
+python training/train_unsloth.py \
+  --dataset-file training_pairs.jsonl \
+  --num-train-epochs 1 \
+  --output-dir outputs
+```
+
+CSV files with `input` and `output` columns are also supported.
+
+## Sample After Training
+
+```bash
+python training/train_unsloth.py \
+  --dataset-file training_pairs.jsonl \
+  --max-steps 60 \
+  --sample-prompt "what are you up to?"
+```
+
+## GGUF Export
+
+For local export:
+
+```bash
+python training/train_unsloth.py \
+  --dataset-file training_pairs.jsonl \
+  --save-gguf-dir model \
+  --gguf-quantization q8_0
+```
+
+For Hugging Face upload, export `HF_TOKEN` in the environment first:
+
+```bash
+python training/train_unsloth.py \
+  --dataset-file training_pairs.jsonl \
+  --push-gguf \
+  --hub-model-id seankwalker/seanbot-2-llama-3-1-imessage
+```
+
+The script reads `HF_TOKEN` from the environment when `--push-gguf` is used. It
+does not read `.env` files automatically.
+
+## Privacy
+
+Training datasets, checkpoints, generated samples, and pushed models may encode
+private conversation content. Keep generated artifacts out of Git and review
+uploads before sharing.
