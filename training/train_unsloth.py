@@ -9,6 +9,7 @@ DEFAULT_HUB_MODEL_ID = "seankwalker/seanbot-2-llama-3-1-imessage"
 DEFAULT_SYSTEM_MESSAGE = (
     "You are a 28 year old male named Sean, having a conversation with a friend"
 )
+DISABLE_RESPONSE_END_MARKER = ""
 
 PROMPT_TEMPLATE = """Below are some statements that have been made by the other person in a conversation with you. Write responses that appropriately respond to each message.
 
@@ -19,7 +20,28 @@ PROMPT_TEMPLATE = """Below are some statements that have been made by the other 
 {OUTPUT}"""
 
 
-def render_prompt(input_text: str, output_text: str, system_message: str) -> str:
+class StopOnTokenSequence:
+    def __init__(self, stop_token_ids: list[int]):
+        self.stop_token_ids = stop_token_ids
+
+    def __call__(self, input_ids, scores=None, **kwargs) -> bool:
+        stop_length = len(self.stop_token_ids)
+        if stop_length == 0 or input_ids.shape[-1] < stop_length:
+            return False
+
+        tail = input_ids[0, -stop_length:].detach().cpu().tolist()
+        return tail == self.stop_token_ids
+
+
+def render_prompt(
+    input_text: str,
+    output_text: str,
+    system_message: str,
+    response_end_marker: str = DISABLE_RESPONSE_END_MARKER,
+) -> str:
+    if output_text and response_end_marker:
+        output_text = f"{output_text}\n{response_end_marker}"
+
     prompt = PROMPT_TEMPLATE.replace("{INPUT}", input_text).replace(
         "{OUTPUT}",
         output_text,
@@ -29,7 +51,11 @@ def render_prompt(input_text: str, output_text: str, system_message: str) -> str
     return prompt
 
 
-def render_messages(messages: list[dict[str, str]], system_message: str) -> str:
+def render_messages(
+    messages: list[dict[str, str]],
+    system_message: str,
+    response_end_marker: str = DISABLE_RESPONSE_END_MARKER,
+) -> str:
     user_messages = [
         message["content"]
         for message in messages
@@ -48,7 +74,48 @@ def render_messages(messages: list[dict[str, str]], system_message: str) -> str:
         "\n\n".join(user_messages),
         "\n\n".join(assistant_messages),
         system_message,
+        response_end_marker,
     )
+
+
+def resolve_response_end_marker(tokenizer, configured_marker: str | None) -> str:
+    if configured_marker is not None:
+        return configured_marker
+    return getattr(tokenizer, "eos_token", None) or DISABLE_RESPONSE_END_MARKER
+
+
+def get_token_ids(tokenizer, text: str) -> list[int]:
+    encoded = tokenizer(text, add_special_tokens=False)
+    token_ids = encoded.input_ids
+
+    if hasattr(token_ids, "tolist"):
+        token_ids = token_ids.tolist()
+    if token_ids and isinstance(token_ids[0], list):
+        token_ids = token_ids[0]
+
+    return token_ids
+
+
+def build_stopping_criteria(
+    tokenizer,
+    response_end_marker: str,
+    stopping_criteria_list_cls=None,
+):
+    if not response_end_marker:
+        return None
+
+    stop_token_ids = get_token_ids(tokenizer, response_end_marker)
+    if not stop_token_ids:
+        return None
+    if stop_token_ids == [getattr(tokenizer, "eos_token_id", None)]:
+        return None
+
+    if stopping_criteria_list_cls is None:
+        from transformers import StoppingCriteriaList
+
+        stopping_criteria_list_cls = StoppingCriteriaList
+
+    return stopping_criteria_list_cls([StopOnTokenSequence(stop_token_ids)])
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -72,8 +139,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dataset-split", default="train")
     parser.add_argument("--dataset-num-proc", type=int, default=2)
-    parser.add_argument("--conversation-extension", type=int, default=3)
+    parser.add_argument(
+        "--conversation-extension",
+        type=int,
+        default=3,
+        help="Deprecated compatibility option; local exports already include context.",
+    )
     parser.add_argument("--system-message", default=DEFAULT_SYSTEM_MESSAGE)
+    parser.add_argument(
+        "--response-end-marker",
+        default=None,
+        help=(
+            "Text appended after assistant responses. Defaults to tokenizer.eos_token. "
+            'Pass "" to disable.'
+        ),
+    )
 
     parser.add_argument("--output-dir", default="outputs")
     parser.add_argument("--per-device-train-batch-size", type=int, default=1)
@@ -143,30 +223,37 @@ def load_source_dataset(args: argparse.Namespace):
 
 
 def prepare_dataset(dataset, tokenizer, args: argparse.Namespace):
-    from unsloth import apply_chat_template, standardize_sharegpt, to_sharegpt
-
     columns = set(dataset.column_names)
+    response_end_marker = resolve_response_end_marker(
+        tokenizer,
+        args.response_end_marker,
+    )
 
     if "messages" in columns:
         return dataset.map(
-            lambda row: {"text": render_messages(row["messages"], args.system_message)},
+            lambda row: {
+                "text": render_messages(
+                    row["messages"],
+                    args.system_message,
+                    response_end_marker,
+                )
+            },
             remove_columns=dataset.column_names,
             num_proc=args.dataset_num_proc,
         )
 
     if {"input", "output"}.issubset(columns):
-        dataset = to_sharegpt(
-            dataset=dataset,
-            merged_prompt="The input is: {input}",
-            output_column_name="output",
-            conversation_extension=args.conversation_extension,
-        )
-        dataset = standardize_sharegpt(dataset)
-        return apply_chat_template(
-            dataset=dataset,
-            tokenizer=tokenizer,
-            chat_template=PROMPT_TEMPLATE,
-            default_system_message=args.system_message,
+        return dataset.map(
+            lambda row: {
+                "text": render_prompt(
+                    row["input"],
+                    row["output"],
+                    args.system_message,
+                    response_end_marker,
+                )
+            },
+            remove_columns=dataset.column_names,
+            num_proc=args.dataset_num_proc,
         )
 
     raise SystemExit(
@@ -243,13 +330,11 @@ def run_sample(
     prompt: str,
     max_new_tokens: int,
     system_message: str,
-    text_streamer_cls=None,
+    response_end_marker: str = DISABLE_RESPONSE_END_MARKER,
     fast_language_model_cls=None,
+    stopping_criteria_list_cls=None,
+    device: str = "cuda",
 ) -> None:
-    if text_streamer_cls is None:
-        from transformers import TextStreamer
-
-        text_streamer_cls = TextStreamer
     if fast_language_model_cls is None:
         from unsloth import FastLanguageModel
 
@@ -257,15 +342,46 @@ def run_sample(
 
     fast_language_model_cls.for_inference(model)
     prompt_text = render_prompt(prompt, "", system_message)
-    input_ids = tokenizer(prompt_text, return_tensors="pt").input_ids.to("cuda")
+    encoded = tokenizer(prompt_text, return_tensors="pt")
+    if hasattr(encoded, "to"):
+        encoded = encoded.to(device)
+    elif isinstance(encoded, dict):
+        encoded = {
+            key: value.to(device) if hasattr(value, "to") else value
+            for key, value in encoded.items()
+        }
+    else:
+        encoded.input_ids = encoded.input_ids.to(device)
 
-    text_streamer = text_streamer_cls(tokenizer, skip_prompt=True)
-    model.generate(
-        input_ids,
-        streamer=text_streamer,
-        max_new_tokens=max_new_tokens,
-        pad_token_id=tokenizer.eos_token_id,
+    input_ids = encoded["input_ids"] if isinstance(encoded, dict) else encoded.input_ids
+    input_length = input_ids.shape[-1]
+
+    generation_kwargs = (
+        dict(encoded) if isinstance(encoded, dict) else {"input_ids": input_ids}
     )
+    generation_kwargs.update(
+        {
+            "max_new_tokens": max_new_tokens,
+            "pad_token_id": tokenizer.eos_token_id,
+            "eos_token_id": tokenizer.eos_token_id,
+        }
+    )
+    stopping_criteria = build_stopping_criteria(
+        tokenizer,
+        response_end_marker,
+        stopping_criteria_list_cls=stopping_criteria_list_cls,
+    )
+    if stopping_criteria is not None:
+        generation_kwargs["stopping_criteria"] = stopping_criteria
+
+    generated_ids = model.generate(**generation_kwargs)
+    output_ids = generated_ids[0][input_length:]
+    output_text = tokenizer.decode(output_ids, skip_special_tokens=False)
+
+    if response_end_marker:
+        output_text = output_text.split(response_end_marker, 1)[0]
+
+    print(output_text.strip())
 
 
 def export_gguf(model, tokenizer, args: argparse.Namespace) -> None:
@@ -318,12 +434,17 @@ def main() -> None:
     trainer.train()
 
     if args.sample_prompt:
+        response_end_marker = resolve_response_end_marker(
+            tokenizer,
+            args.response_end_marker,
+        )
         run_sample(
             model,
             tokenizer,
             args.sample_prompt,
             args.sample_max_new_tokens,
             args.system_message,
+            response_end_marker,
         )
 
     export_gguf(model, tokenizer, args)

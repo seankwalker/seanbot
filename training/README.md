@@ -51,6 +51,12 @@ python training/train_unsloth.py \
 
 CSV files with `input` and `output` columns are also supported.
 
+By default, the script appends the tokenizer EOS token after every assistant
+response in the training text. This teaches the adapter to end the response
+instead of continuing the transcript. Override it with
+`--response-end-marker "<END_RESPONSE>"`, or disable it with
+`--response-end-marker ""`.
+
 The default training settings are T4-oriented: `--max-seq-length 1024`,
 `--per-device-train-batch-size 1`, and `--gradient-accumulation-steps 8`.
 If an A100/L4 has headroom, increase `--max-seq-length` or per-device batch
@@ -65,6 +71,9 @@ python training/train_unsloth.py \
   --max-steps 60 \
   --sample-prompt "what are you up to?"
 ```
+
+Sample generation uses the same response end marker and strips it from the
+printed output.
 
 ## GGUF Export
 
