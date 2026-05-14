@@ -21,9 +21,13 @@ the runtime, and rerun setup.
 Install the GPU training dependencies in a Colab cell before running the script:
 
 ```bash
-pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
-pip install --no-deps "xformers<0.0.27" "trl<0.9.0" peft accelerate bitsandbytes
+pip install -U pip
+pip install unsloth
+pip install trl peft accelerate bitsandbytes
 ```
+
+Do not pin old `xformers` versions in Colab. If pip starts `Building wheels for
+collected packages: xformers`, stop the cell and use the commands above.
 
 ## Train From Hugging Face Dataset
 
