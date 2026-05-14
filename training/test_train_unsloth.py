@@ -8,10 +8,12 @@ from unittest.mock import MagicMock
 from training.train_unsloth import (
     build_stopping_criteria,
     find_last_subsequence,
+    generate_response,
     prepare_dataset,
     render_messages,
     render_prompt,
     resolve_response_end_marker,
+    run_interactive,
     run_sample,
 )
 
@@ -136,7 +138,57 @@ class PromptRenderingTests(unittest.TestCase):
         fast_language_model_cls.for_inference.assert_called_once_with(model)
         model.generate.assert_called_once()
         self.assertIn("stopping_criteria", model.generate.call_args.kwargs)
+        self.assertTrue(model.generate.call_args.kwargs["do_sample"])
+        self.assertEqual(0.7, model.generate.call_args.kwargs["temperature"])
+        self.assertEqual(0.9, model.generate.call_args.kwargs["top_p"])
         self.assertEqual("good\n", output.getvalue())
+
+    def test_generate_response_can_disable_sampling(self):
+        model = MagicMock()
+        model.generate.return_value = [[10, 11, 12, 13, 14]]
+        tokenizer = FakeTokenizer()
+
+        response = generate_response(
+            model,
+            tokenizer,
+            "hello",
+            10,
+            "You are Sean",
+            "<END>",
+            do_sample=False,
+            fast_language_model_cls=MagicMock(),
+            stopping_criteria_list_cls=MagicMock(side_effect=lambda values: values),
+        )
+
+        self.assertEqual("good", response)
+        self.assertFalse(model.generate.call_args.kwargs["do_sample"])
+        self.assertNotIn("temperature", model.generate.call_args.kwargs)
+        self.assertNotIn("top_p", model.generate.call_args.kwargs)
+
+    def test_run_interactive_exits_on_quit(self):
+        model = MagicMock()
+        model.generate.return_value = [[10, 11, 12, 13, 14]]
+        tokenizer = FakeTokenizer()
+        prompts = iter(["hello", "quit"])
+        outputs = []
+
+        run_interactive(
+            model,
+            tokenizer,
+            10,
+            "You are Sean",
+            "<END>",
+            input_func=lambda prompt: next(prompts),
+            output_func=outputs.append,
+            fast_language_model_cls=MagicMock(),
+            stopping_criteria_list_cls=MagicMock(side_effect=lambda values: values),
+        )
+
+        self.assertEqual(
+            "Interactive mode. Type 'quit', 'exit', or a blank line to stop.",
+            outputs[0],
+        )
+        self.assertEqual("bot> good", outputs[1])
 
     def test_prepare_dataset_can_limit_smoke_samples(self):
         rows = [

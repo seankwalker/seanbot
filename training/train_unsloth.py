@@ -236,6 +236,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--sample-prompt", help="Optional prompt to test after training.")
     parser.add_argument("--sample-max-new-tokens", type=int, default=80)
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Start a prompt/response REPL after training.",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.7,
+        help="Sampling temperature for sample and interactive generation.",
+    )
+    parser.add_argument(
+        "--top-p",
+        type=float,
+        default=0.9,
+        help="Nucleus sampling top-p for sample and interactive generation.",
+    )
+    parser.add_argument(
+        "--do-sample",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use stochastic sampling for sample and interactive generation.",
+    )
 
     parser.add_argument(
         "--save-gguf-dir",
@@ -405,17 +428,39 @@ def build_data_collator(tokenizer, args: argparse.Namespace):
     )
 
 
-def run_sample(
+def encode_prompt(tokenizer, prompt_text: str, device: str):
+    encoded = tokenizer(prompt_text, return_tensors="pt")
+    if hasattr(encoded, "to"):
+        return encoded.to(device)
+
+    if isinstance(encoded, dict):
+        return {
+            key: value.to(device) if hasattr(value, "to") else value
+            for key, value in encoded.items()
+        }
+
+    encoded.input_ids = encoded.input_ids.to(device)
+    return encoded
+
+
+def get_input_ids(encoded):
+    return encoded["input_ids"] if isinstance(encoded, dict) else encoded.input_ids
+
+
+def generate_response(
     model,
     tokenizer,
     prompt: str,
     max_new_tokens: int,
     system_message: str,
     response_end_marker: str = DISABLE_RESPONSE_END_MARKER,
+    do_sample: bool = True,
+    temperature: float = 0.7,
+    top_p: float = 0.9,
     fast_language_model_cls=None,
     stopping_criteria_list_cls=None,
     device: str = "cuda",
-) -> None:
+) -> str:
     if fast_language_model_cls is None:
         from unsloth import FastLanguageModel
 
@@ -423,18 +468,8 @@ def run_sample(
 
     fast_language_model_cls.for_inference(model)
     prompt_text = render_prompt(prompt, "", system_message)
-    encoded = tokenizer(prompt_text, return_tensors="pt")
-    if hasattr(encoded, "to"):
-        encoded = encoded.to(device)
-    elif isinstance(encoded, dict):
-        encoded = {
-            key: value.to(device) if hasattr(value, "to") else value
-            for key, value in encoded.items()
-        }
-    else:
-        encoded.input_ids = encoded.input_ids.to(device)
-
-    input_ids = encoded["input_ids"] if isinstance(encoded, dict) else encoded.input_ids
+    encoded = encode_prompt(tokenizer, prompt_text, device)
+    input_ids = get_input_ids(encoded)
     input_length = input_ids.shape[-1]
 
     generation_kwargs = (
@@ -445,8 +480,17 @@ def run_sample(
             "max_new_tokens": max_new_tokens,
             "pad_token_id": tokenizer.eos_token_id,
             "eos_token_id": tokenizer.eos_token_id,
+            "do_sample": do_sample,
         }
     )
+    if do_sample:
+        generation_kwargs.update(
+            {
+                "temperature": temperature,
+                "top_p": top_p,
+            }
+        )
+
     stopping_criteria = build_stopping_criteria(
         tokenizer,
         response_end_marker,
@@ -462,7 +506,83 @@ def run_sample(
     if response_end_marker:
         output_text = output_text.split(response_end_marker, 1)[0]
 
-    print(output_text.strip())
+    return output_text.strip()
+
+
+def run_sample(
+    model,
+    tokenizer,
+    prompt: str,
+    max_new_tokens: int,
+    system_message: str,
+    response_end_marker: str = DISABLE_RESPONSE_END_MARKER,
+    do_sample: bool = True,
+    temperature: float = 0.7,
+    top_p: float = 0.9,
+    fast_language_model_cls=None,
+    stopping_criteria_list_cls=None,
+    device: str = "cuda",
+) -> None:
+    print(
+        generate_response(
+            model,
+            tokenizer,
+            prompt,
+            max_new_tokens,
+            system_message,
+            response_end_marker=response_end_marker,
+            do_sample=do_sample,
+            temperature=temperature,
+            top_p=top_p,
+            fast_language_model_cls=fast_language_model_cls,
+            stopping_criteria_list_cls=stopping_criteria_list_cls,
+            device=device,
+        )
+    )
+
+
+def run_interactive(
+    model,
+    tokenizer,
+    max_new_tokens: int,
+    system_message: str,
+    response_end_marker: str = DISABLE_RESPONSE_END_MARKER,
+    do_sample: bool = True,
+    temperature: float = 0.7,
+    top_p: float = 0.9,
+    input_func=input,
+    output_func=print,
+    fast_language_model_cls=None,
+    stopping_criteria_list_cls=None,
+    device: str = "cuda",
+) -> None:
+    output_func("Interactive mode. Type 'quit', 'exit', or a blank line to stop.")
+
+    while True:
+        try:
+            prompt = input_func("you> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            output_func("")
+            return
+
+        if not prompt or prompt.lower() in {"quit", "exit"}:
+            return
+
+        response = generate_response(
+            model,
+            tokenizer,
+            prompt,
+            max_new_tokens,
+            system_message,
+            response_end_marker=response_end_marker,
+            do_sample=do_sample,
+            temperature=temperature,
+            top_p=top_p,
+            fast_language_model_cls=fast_language_model_cls,
+            stopping_criteria_list_cls=stopping_criteria_list_cls,
+            device=device,
+        )
+        output_func(f"bot> {response}")
 
 
 def export_gguf(model, tokenizer, args: argparse.Namespace) -> None:
@@ -515,11 +635,13 @@ def main() -> None:
 
     trainer.train()
 
-    if args.sample_prompt:
+    if args.sample_prompt or args.interactive:
         response_end_marker = resolve_response_end_marker(
             tokenizer,
             args.response_end_marker,
         )
+
+    if args.sample_prompt:
         run_sample(
             model,
             tokenizer,
@@ -527,6 +649,21 @@ def main() -> None:
             args.sample_max_new_tokens,
             args.system_message,
             response_end_marker,
+            do_sample=args.do_sample,
+            temperature=args.temperature,
+            top_p=args.top_p,
+        )
+
+    if args.interactive:
+        run_interactive(
+            model,
+            tokenizer,
+            args.sample_max_new_tokens,
+            args.system_message,
+            response_end_marker,
+            do_sample=args.do_sample,
+            temperature=args.temperature,
+            top_p=args.top_p,
         )
 
     export_gguf(model, tokenizer, args)

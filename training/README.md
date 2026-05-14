@@ -80,6 +80,23 @@ python training/train_unsloth.py \
 Sample generation uses the same response end marker and strips it from the
 printed output.
 
+## Interactive Vibe Test
+
+Use `--interactive` to keep the trained LoRA loaded and test multiple prompts in
+the same Colab GPU session:
+
+```bash
+python training/train_unsloth.py \
+  --dataset-file training_pairs.jsonl \
+  --max-train-samples 512 \
+  --max-steps 60 \
+  --output-dir /tmp/seanbot-vibe \
+  --interactive
+```
+
+Type `quit`, `exit`, or a blank line to stop. Tune generation with
+`--temperature`, `--top-p`, and `--no-do-sample`.
+
 ## Fast Smoke Test
 
 Use a tiny subset and a few steps to verify imports, dataset rendering,
