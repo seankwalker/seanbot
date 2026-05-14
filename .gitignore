@@ -10,6 +10,7 @@ __pycache__/
 .DS_Store
 .env
 outputs/
+eval_runs/
 model/
 *.gguf
 chat_ids.txt

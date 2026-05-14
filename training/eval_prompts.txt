@@ -1,0 +1,21 @@
+# One prompt per non-empty line. Keep this stable so checkpoint comparisons are meaningful.
+Hi, how are you doing?
+What are you up to today?
+Did you end up going to the gym?
+How did your morning go?
+What are you working on right now?
+Are you free later?
+Do you want to grab dinner tonight?
+I'm kind of stressed about work today
+Can you remind me what we talked about yesterday?
+That meeting was kind of a mess lol
+I think I need to cancel tonight
+What do you think I should do?
+Are you mad at me?
+That was actually really funny
+I'm running a few minutes late
+Do you still want to go?
+How are you feeling?
+What did you do after work?
+I'm proud of you
+Can I ask you something kind of random?

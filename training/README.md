@@ -111,6 +111,30 @@ Use `--resume-from-checkpoint /path/to/checkpoint` only when continuing an
 interrupted training run; use `--inference-only` for vibe testing an existing
 checkpoint.
 
+## Repeatable Eval Runs
+
+Use `eval_checkpoint.py` to run the same prompt set against different
+checkpoints and decoding settings:
+
+```bash
+python training/eval_checkpoint.py \
+  --model-name /tmp/seanbot-vibe/checkpoint-60 \
+  --prompts training/eval_prompts.txt \
+  --output eval_runs/smoke-001.jsonl \
+  --run-label smoke-001 \
+  --sample-max-new-tokens 60 \
+  --temperature 0.65 \
+  --top-p 0.9
+```
+
+The output is JSONL with one row per prompt/sample. Keep
+`training/eval_prompts.txt` stable when comparing checkpoints, and write eval
+outputs under `eval_runs/` so private generations stay out of Git.
+
+For manual review, compare runs on tone, coherence, specificity, plausible
+length, and privacy/safety. Prefer changing one variable per run: dataset,
+checkpoint step count, or decoding settings.
+
 ## Fast Smoke Test
 
 Use a tiny subset and a few steps to verify imports, dataset rendering,
