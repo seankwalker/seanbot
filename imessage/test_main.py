@@ -7,6 +7,7 @@ from imessage.main import (
     decode_attributed_body,
     fetch_messages,
     group_turns,
+    is_reaction_text,
 )
 
 
@@ -36,6 +37,17 @@ class PairingTests(unittest.TestCase):
 
 
 class FetchMessageTests(unittest.TestCase):
+    def test_identifies_reaction_text(self):
+        self.assertTrue(is_reaction_text('Loved "a menace on the courts"'))
+        self.assertTrue(is_reaction_text('Loved “a menace on the courts”'))
+        self.assertTrue(
+            is_reaction_text(
+                "Loved “a menace on the courts”\nQuestioned “stop hitting on me as a kid”"
+            )
+        )
+        self.assertFalse(is_reaction_text("loved that match yesterday"))
+        self.assertFalse(is_reaction_text('Loved "a menace"\nYOU FIRST'))
+
     def test_decodes_attributed_body_fallback(self):
         data = b"streamtyped____NSString\x01\x94\x84\x01+hello there NSDictionary"
 
@@ -52,6 +64,7 @@ class FetchMessageTests(unittest.TestCase):
                     date INTEGER NOT NULL,
                     text TEXT,
                     attributedBody BLOB,
+                    associated_message_type INTEGER,
                     is_from_me INTEGER NOT NULL
                 );
                 CREATE TABLE chat (
@@ -63,10 +76,10 @@ class FetchMessageTests(unittest.TestCase):
                     message_id INTEGER NOT NULL
                 );
                 INSERT INTO chat (ROWID, chat_identifier) VALUES (1, 'chat-a');
-                INSERT INTO message (ROWID, date, text, attributedBody, is_from_me) VALUES
-                    (1, 100, 'oldest', NULL, 0),
-                    (2, 200, 'middle', NULL, 1),
-                    (3, 300, 'newest', NULL, 0);
+                INSERT INTO message (ROWID, date, text, attributedBody, associated_message_type, is_from_me) VALUES
+                    (1, 100, 'oldest', NULL, 0, 0),
+                    (2, 200, 'middle', NULL, 0, 1),
+                    (3, 300, 'newest', NULL, 0, 0);
                 INSERT INTO chat_message_join (chat_id, message_id) VALUES
                     (1, 1),
                     (1, 2),
@@ -80,6 +93,7 @@ class FetchMessageTests(unittest.TestCase):
                 limit=2,
                 min_date=None,
                 max_date=None,
+                include_reactions=False,
             )
         finally:
             connection.close()
@@ -97,6 +111,97 @@ class FetchMessageTests(unittest.TestCase):
                     date INTEGER NOT NULL,
                     text TEXT,
                     attributedBody BLOB,
+                    associated_message_type INTEGER,
+                    is_from_me INTEGER NOT NULL
+                );
+                CREATE TABLE chat (
+                    ROWID INTEGER PRIMARY KEY,
+                    chat_identifier TEXT NOT NULL
+                );
+                CREATE TABLE chat_message_join (
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL
+                );
+                INSERT INTO chat (ROWID, chat_identifier) VALUES (1, 'chat-a');
+                INSERT INTO message (ROWID, date, text, attributedBody, associated_message_type, is_from_me) VALUES
+                    (1, 100, NULL, X'73747265616D74797065645F5F5F5F4E53537472696E67019484012B68656C6C6F207468657265204E5344696374696F6E617279', 0, 0);
+                INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, 1);
+                """
+            )
+
+            result = fetch_messages(
+                cursor,
+                "chat-a",
+                limit=-1,
+                min_date=None,
+                max_date=None,
+                include_reactions=False,
+            )
+        finally:
+            connection.close()
+
+        self.assertEqual(len(result.messages), 1)
+        self.assertEqual(result.messages[0].text, "hello there")
+        self.assertEqual(result.messages[0].text_source, "attributedBody")
+
+    def test_skips_associated_reactions_by_default(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            cursor = connection.cursor()
+            cursor.executescript(
+                """
+                CREATE TABLE message (
+                    ROWID INTEGER PRIMARY KEY,
+                    date INTEGER NOT NULL,
+                    text TEXT,
+                    attributedBody BLOB,
+                    associated_message_type INTEGER,
+                    is_from_me INTEGER NOT NULL
+                );
+                CREATE TABLE chat (
+                    ROWID INTEGER PRIMARY KEY,
+                    chat_identifier TEXT NOT NULL
+                );
+                CREATE TABLE chat_message_join (
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL
+                );
+                INSERT INTO chat (ROWID, chat_identifier) VALUES (1, 'chat-a');
+                INSERT INTO message (ROWID, date, text, attributedBody, associated_message_type, is_from_me) VALUES
+                    (1, 100, 'Loved “hello”', NULL, 2000, 0),
+                    (2, 200, 'actual message', NULL, 0, 0);
+                INSERT INTO chat_message_join (chat_id, message_id) VALUES
+                    (1, 1),
+                    (1, 2);
+                """
+            )
+
+            result = fetch_messages(
+                cursor,
+                "chat-a",
+                limit=-1,
+                min_date=None,
+                max_date=None,
+                include_reactions=False,
+            )
+        finally:
+            connection.close()
+
+        self.assertEqual([message.text for message in result.messages], ["actual message"])
+        self.assertEqual(result.excluded_reaction_rows, 1)
+        self.assertEqual(result.skipped_decoded_reaction_rows, 0)
+
+    def test_skips_reaction_text_fallback(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            cursor = connection.cursor()
+            cursor.executescript(
+                """
+                CREATE TABLE message (
+                    ROWID INTEGER PRIMARY KEY,
+                    date INTEGER NOT NULL,
+                    text TEXT,
+                    attributedBody BLOB,
                     is_from_me INTEGER NOT NULL
                 );
                 CREATE TABLE chat (
@@ -109,8 +214,11 @@ class FetchMessageTests(unittest.TestCase):
                 );
                 INSERT INTO chat (ROWID, chat_identifier) VALUES (1, 'chat-a');
                 INSERT INTO message (ROWID, date, text, attributedBody, is_from_me) VALUES
-                    (1, 100, NULL, X'73747265616D74797065645F5F5F5F4E53537472696E67019484012B68656C6C6F207468657265204E5344696374696F6E617279', 0);
-                INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, 1);
+                    (1, 100, 'Loved “hello”', NULL, 0),
+                    (2, 200, 'actual message', NULL, 0);
+                INSERT INTO chat_message_join (chat_id, message_id) VALUES
+                    (1, 1),
+                    (1, 2);
                 """
             )
 
@@ -120,13 +228,14 @@ class FetchMessageTests(unittest.TestCase):
                 limit=-1,
                 min_date=None,
                 max_date=None,
+                include_reactions=False,
             )
         finally:
             connection.close()
 
-        self.assertEqual(len(result.messages), 1)
-        self.assertEqual(result.messages[0].text, "hello there")
-        self.assertEqual(result.messages[0].text_source, "attributedBody")
+        self.assertEqual([message.text for message in result.messages], ["actual message"])
+        self.assertEqual(result.excluded_reaction_rows, 0)
+        self.assertEqual(result.skipped_decoded_reaction_rows, 1)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ uv run main.py \
 `--limit` reads the most recent text-bearing messages per chat, then sorts them
 chronologically before building pairs. Rows with `message.text` or decodable
 `message.attributedBody` are considered text-bearing.
+iMessage tapbacks/reactions are skipped by default.
 
 ## Chat ID Files
 
@@ -55,6 +56,7 @@ uv run main.py \
 - `--min-date` / `--max-date`: filter by local date or ISO datetime.
 - `--min-chars` / `--max-chars`: drop turns outside a length range.
 - `--strip-urls`: remove URLs while preserving the rest of the message style.
+- `--include-reactions`: keep tapbacks/reactions such as `Loved “...”`.
 - `--jsonl-output`: write chat-style JSONL records for SFT workflows.
 
 ## Output Formats

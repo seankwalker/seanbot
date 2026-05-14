@@ -11,6 +11,13 @@ from urllib.parse import quote
 
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
 APPLE_NANOSECONDS_PER_SECOND = 1_000_000_000
+REACTION_LINE_PATTERN = re.compile(
+    r"^(?:"
+    r"(?:Liked|Loved|Disliked|Laughed at|Emphasized|Questioned)\s+[\"“].+[\"”]"
+    r"|Removed\s+(?:a|an)\s+.+\s+from\s+[\"“].+[\"”]"
+    r"|Reacted(?:\s+with\s+.+)?\s+to\s+[\"“].+[\"”]"
+    r")$"
+)
 
 
 @dataclass(frozen=True)
@@ -32,6 +39,8 @@ class FetchResult:
     attributed_body_rows: int
     rows_fetched: int
     decoded_attributed_rows: int
+    excluded_reaction_rows: int
+    skipped_decoded_reaction_rows: int
     skipped_undecoded_rows: int
 
 
@@ -81,6 +90,11 @@ def normalize_text(text: str, *, strip_urls: bool) -> str:
     if strip_urls:
         text = re.sub(r"https?://\S+|www\.\S+", "", text).strip()
     return text
+
+
+def is_reaction_text(text: str) -> bool:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return bool(lines) and all(REACTION_LINE_PATTERN.match(line) for line in lines)
 
 
 def decode_attributed_body(data: bytes | None) -> str | None:
@@ -173,6 +187,10 @@ def read_chat_ids(chat_ids: str | None, chat_ids_file: Path | None) -> list[str]
     return deduped
 
 
+def get_message_columns(cursor: sqlite3.Cursor) -> set[str]:
+    return {row[1] for row in cursor.execute("PRAGMA table_info(message)").fetchall()}
+
+
 def fetch_messages(
     cursor: sqlite3.Cursor,
     chat_identifier: str,
@@ -180,23 +198,58 @@ def fetch_messages(
     limit: int,
     min_date: int | None,
     max_date: int | None,
+    include_reactions: bool,
 ) -> FetchResult:
-    where_clauses = [
+    base_where_clauses = [
         "chat.chat_identifier = ?",
     ]
-    params: list[object] = [chat_identifier]
+    base_params: list[object] = [chat_identifier]
 
     if min_date is not None:
-        where_clauses.append("message.date >= ?")
-        params.append(min_date)
+        base_where_clauses.append("message.date >= ?")
+        base_params.append(min_date)
     if max_date is not None:
-        where_clauses.append("message.date <= ?")
-        params.append(max_date)
+        base_where_clauses.append("message.date <= ?")
+        base_params.append(max_date)
 
+    message_columns = get_message_columns(cursor)
+    reaction_filter_sql = None
+    if not include_reactions and "associated_message_type" in message_columns:
+        reaction_filter_sql = (
+            "(message.associated_message_type IS NULL "
+            "OR message.associated_message_type = 0)"
+        )
+
+    raw_where_sql = " AND ".join(base_where_clauses)
+    raw_count_query = f"""
+        SELECT COUNT(*)
+        FROM message
+        JOIN chat_message_join ON chat_message_join.message_id = message.ROWID
+        JOIN chat ON chat.ROWID = chat_message_join.chat_id
+        WHERE {raw_where_sql}
+    """
+    (raw_rows,) = cursor.execute(raw_count_query, base_params).fetchone()
+
+    excluded_reaction_rows = 0
+    if reaction_filter_sql is not None:
+        reaction_count_query = f"""
+            SELECT SUM(CASE WHEN NOT ({reaction_filter_sql}) THEN 1 ELSE 0 END)
+            FROM message
+            JOIN chat_message_join ON chat_message_join.message_id = message.ROWID
+            JOIN chat ON chat.ROWID = chat_message_join.chat_id
+            WHERE {raw_where_sql}
+        """
+        (excluded_reaction_rows,) = cursor.execute(
+            reaction_count_query,
+            base_params,
+        ).fetchone()
+
+    where_clauses = list(base_where_clauses)
+    if reaction_filter_sql is not None:
+        where_clauses.append(reaction_filter_sql)
     where_sql = " AND ".join(where_clauses)
     count_query = f"""
         SELECT
-            COUNT(*) AS raw_rows,
             SUM(CASE WHEN message.text IS NOT NULL AND message.text != '' THEN 1 ELSE 0 END) AS text_rows,
             SUM(CASE WHEN message.attributedBody IS NOT NULL THEN 1 ELSE 0 END) AS attributed_body_rows,
             SUM(
@@ -212,9 +265,9 @@ def fetch_messages(
         JOIN chat ON chat.ROWID = chat_message_join.chat_id
         WHERE {where_sql}
     """
-    raw_rows, text_rows, attributed_body_rows, candidate_rows = cursor.execute(
+    text_rows, attributed_body_rows, candidate_rows = cursor.execute(
         count_query,
-        params,
+        base_params,
     ).fetchone()
 
     candidate_where_sql = (
@@ -247,11 +300,15 @@ def fetch_messages(
             )
             ORDER BY message_date ASC, message_id ASC
         """
-        params.append(limit)
 
-    rows = cursor.execute(query, params).fetchall()
+    query_params = list(base_params)
+    if limit != -1:
+        query_params.append(limit)
+
+    rows = cursor.execute(query, query_params).fetchall()
     messages: list[Message] = []
     decoded_attributed_rows = 0
+    skipped_decoded_reaction_rows = 0
     skipped_undecoded_rows = 0
 
     for row in rows:
@@ -266,6 +323,10 @@ def fetch_messages(
             else:
                 skipped_undecoded_rows += 1
                 continue
+
+        if not include_reactions and is_reaction_text(text):
+            skipped_decoded_reaction_rows += 1
+            continue
 
         messages.append(
             Message(
@@ -286,6 +347,8 @@ def fetch_messages(
         attributed_body_rows=attributed_body_rows or 0,
         rows_fetched=len(rows),
         decoded_attributed_rows=decoded_attributed_rows,
+        excluded_reaction_rows=excluded_reaction_rows or 0,
+        skipped_decoded_reaction_rows=skipped_decoded_reaction_rows,
         skipped_undecoded_rows=skipped_undecoded_rows,
     )
 
@@ -447,6 +510,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Remove URLs during export. By default text style is preserved.",
     )
     parser.add_argument(
+        "--include-reactions",
+        action="store_true",
+        help="Include iMessage tapbacks/reactions. Reactions are skipped by default.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path("training_pairs.csv"),
@@ -492,13 +560,19 @@ def main() -> None:
         "turns": 0,
         "pairs": 0,
         "decoded_attributed_rows": 0,
+        "excluded_reaction_rows": 0,
+        "skipped_decoded_reaction_rows": 0,
         "skipped_undecoded_rows": 0,
         "skipped_empty": 0,
         "skipped_by_length": 0,
     }
 
     db_uri = f"file:{quote(str(args.db_path.resolve()), safe='/')}?mode=ro"
-    connection = sqlite3.connect(db_uri, uri=True)
+    try:
+        connection = sqlite3.connect(db_uri, uri=True)
+    except sqlite3.OperationalError as error:
+        parser.error(f"Unable to open Messages database: {error}")
+
     try:
         cursor = connection.cursor()
         for chat_identifier in chat_identifiers:
@@ -508,6 +582,7 @@ def main() -> None:
                 limit=args.limit,
                 min_date=min_date,
                 max_date=max_date,
+                include_reactions=args.include_reactions,
             )
             messages = result.messages
             turns, skipped_empty = group_turns(messages, strip_urls=args.strip_urls)
@@ -525,14 +600,21 @@ def main() -> None:
             totals["turns"] += len(turns)
             totals["pairs"] += len(pairs)
             totals["decoded_attributed_rows"] += result.decoded_attributed_rows
+            totals["excluded_reaction_rows"] += result.excluded_reaction_rows
+            totals["skipped_decoded_reaction_rows"] += (
+                result.skipped_decoded_reaction_rows
+            )
             totals["skipped_undecoded_rows"] += result.skipped_undecoded_rows
             totals["skipped_empty"] += skipped_empty
             totals["skipped_by_length"] += skipped_by_length
 
             print(
                 f"{chat_identifier}: "
-                f"{result.raw_rows} raw rows, {result.candidate_rows} text candidates, "
+                f"{result.raw_rows} raw rows, "
+                f"{result.excluded_reaction_rows} reactions excluded before limit, "
+                f"{result.candidate_rows} text candidates, "
                 f"{result.rows_fetched} fetched, {len(messages)} decoded messages, "
+                f"{result.skipped_decoded_reaction_rows} decoded reactions skipped, "
                 f"{len(turns)} turns, {len(pairs)} pairs"
             )
     finally:
@@ -549,6 +631,11 @@ def main() -> None:
     print(f"Rows fetched after limit: {totals['rows_fetched']}")
     print(f"Decoded messages read: {totals['messages']}")
     print(f"Decoded attributedBody rows: {totals['decoded_attributed_rows']}")
+    print(f"Reaction rows excluded before limit: {totals['excluded_reaction_rows']}")
+    print(
+        "Decoded reaction rows skipped after fetch: "
+        f"{totals['skipped_decoded_reaction_rows']}"
+    )
     print(f"Skipped undecoded attributedBody rows: {totals['skipped_undecoded_rows']}")
     print(f"Turns built: {totals['turns']}")
     print(f"Training pairs written: {totals['pairs']}")
