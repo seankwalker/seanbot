@@ -140,6 +140,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-split", default="train")
     parser.add_argument("--dataset-num-proc", type=int, default=2)
     parser.add_argument(
+        "--max-train-samples",
+        type=int,
+        help="Use only the first N rows for fast smoke tests.",
+    )
+    parser.add_argument(
         "--conversation-extension",
         type=int,
         default=3,
@@ -223,6 +228,9 @@ def load_source_dataset(args: argparse.Namespace):
 
 
 def prepare_dataset(dataset, tokenizer, args: argparse.Namespace):
+    if args.max_train_samples is not None:
+        dataset = dataset.select(range(min(args.max_train_samples, len(dataset))))
+
     columns = set(dataset.column_names)
     response_end_marker = resolve_response_end_marker(
         tokenizer,

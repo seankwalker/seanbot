@@ -75,6 +75,23 @@ python training/train_unsloth.py \
 Sample generation uses the same response end marker and strips it from the
 printed output.
 
+## Fast Smoke Test
+
+Use a tiny subset and a few steps to verify imports, dataset rendering,
+training, sample generation, and stop-marker behavior:
+
+```bash
+python training/train_unsloth.py \
+  --dataset-file training_pairs.jsonl \
+  --max-train-samples 128 \
+  --max-steps 10 \
+  --output-dir /tmp/seanbot-smoke \
+  --sample-prompt "How are you?"
+```
+
+For a behavioral sniff test on an A100, `--max-steps 60` is reasonable, but it
+is more than needed for pure smoke testing.
+
 ## GGUF Export
 
 For local export:

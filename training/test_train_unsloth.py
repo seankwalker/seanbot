@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 from training.train_unsloth import (
     build_stopping_criteria,
+    prepare_dataset,
     render_messages,
     render_prompt,
     resolve_response_end_marker,
@@ -39,6 +40,22 @@ class FakeTokenizer:
 
     def decode(self, token_ids, skip_special_tokens=False):
         return "good<END>ignored"
+
+
+class FakeDataset:
+    column_names = ["messages"]
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __len__(self):
+        return len(self.rows)
+
+    def select(self, indexes):
+        return FakeDataset([self.rows[index] for index in indexes])
+
+    def map(self, function, remove_columns=None, num_proc=None):
+        return FakeDataset([function(row) for row in self.rows])
 
 
 class PromptRenderingTests(unittest.TestCase):
@@ -115,6 +132,29 @@ class PromptRenderingTests(unittest.TestCase):
         model.generate.assert_called_once()
         self.assertIn("stopping_criteria", model.generate.call_args.kwargs)
         self.assertEqual("good\n", output.getvalue())
+
+    def test_prepare_dataset_can_limit_smoke_samples(self):
+        rows = [
+            {
+                "messages": [
+                    {"role": "user", "content": f"hello {index}"},
+                    {"role": "assistant", "content": "hey"},
+                ]
+            }
+            for index in range(3)
+        ]
+        args = SimpleNamespace(
+            max_train_samples=2,
+            system_message="You are Sean",
+            response_end_marker="",
+            dataset_num_proc=1,
+        )
+
+        dataset = prepare_dataset(FakeDataset(rows), FakeTokenizer(), args)
+
+        self.assertEqual(2, len(dataset.rows))
+        self.assertIn("hello 0", dataset.rows[0]["text"])
+        self.assertIn("hello 1", dataset.rows[1]["text"])
 
 
 if __name__ == "__main__":
