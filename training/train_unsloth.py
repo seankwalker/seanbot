@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Fine-tune a Llama 3.1 model on iMessage prompt/response pairs."
     )
     parser.add_argument("--model-name", default=DEFAULT_MODEL)
-    parser.add_argument("--max-seq-length", type=int, default=2048)
+    parser.add_argument("--max-seq-length", type=int, default=1024)
     parser.add_argument("--load-in-4bit", action=argparse.BooleanOptionalAction, default=True)
 
     data_source = parser.add_mutually_exclusive_group()
@@ -76,8 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--system-message", default=DEFAULT_SYSTEM_MESSAGE)
 
     parser.add_argument("--output-dir", default="outputs")
-    parser.add_argument("--per-device-train-batch-size", type=int, default=2)
-    parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
+    parser.add_argument("--per-device-train-batch-size", type=int, default=1)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
     parser.add_argument("--warmup-steps", type=int, default=5)
     parser.add_argument("--max-steps", type=int, default=60)
     parser.add_argument("--num-train-epochs", type=float)

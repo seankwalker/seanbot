@@ -51,6 +51,12 @@ python training/train_unsloth.py \
 
 CSV files with `input` and `output` columns are also supported.
 
+The default training settings are T4-oriented: `--max-seq-length 1024`,
+`--per-device-train-batch-size 1`, and `--gradient-accumulation-steps 8`.
+If an A100/L4 has headroom, increase `--max-seq-length` or per-device batch
+size. If a T4 still runs out of memory, keep batch size at `1` and reduce
+`--max-seq-length` to `768`.
+
 ## Sample After Training
 
 ```bash
