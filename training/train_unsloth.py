@@ -19,6 +19,38 @@ PROMPT_TEMPLATE = """Below are some statements that have been made by the other 
 {OUTPUT}"""
 
 
+def render_prompt(input_text: str, output_text: str, system_message: str) -> str:
+    prompt = PROMPT_TEMPLATE.replace("{INPUT}", input_text).replace(
+        "{OUTPUT}",
+        output_text,
+    )
+    if system_message:
+        return f"{system_message}\n\n{prompt}"
+    return prompt
+
+
+def render_messages(messages: list[dict[str, str]], system_message: str) -> str:
+    user_messages = [
+        message["content"]
+        for message in messages
+        if message.get("role") in {"user", "human"}
+    ]
+    assistant_messages = [
+        message["content"]
+        for message in messages
+        if message.get("role") in {"assistant", "gpt"}
+    ]
+
+    if not user_messages or not assistant_messages:
+        raise ValueError("messages rows must include user and assistant content.")
+
+    return render_prompt(
+        "\n\n".join(user_messages),
+        "\n\n".join(assistant_messages),
+        system_message,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Fine-tune a Llama 3.1 model on iMessage prompt/response pairs."
@@ -117,13 +149,7 @@ def prepare_dataset(dataset, tokenizer, args: argparse.Namespace):
 
     if "messages" in columns:
         return dataset.map(
-            lambda row: {
-                "text": tokenizer.apply_chat_template(
-                    row["messages"],
-                    tokenize=False,
-                    add_generation_prompt=False,
-                )
-            },
+            lambda row: {"text": render_messages(row["messages"], args.system_message)},
             remove_columns=dataset.column_names,
             num_proc=args.dataset_num_proc,
         )
