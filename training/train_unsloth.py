@@ -181,6 +181,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-name", default=DEFAULT_MODEL)
     parser.add_argument("--max-seq-length", type=int, default=1024)
     parser.add_argument("--load-in-4bit", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--inference-only",
+        action="store_true",
+        help="Load --model-name and skip dataset loading/training.",
+    )
 
     data_source = parser.add_mutually_exclusive_group()
     data_source.add_argument(
@@ -222,6 +227,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup-steps", type=int, default=5)
     parser.add_argument("--max-steps", type=int, default=60)
     parser.add_argument("--num-train-epochs", type=float)
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        type=Path,
+        help="Resume trainer state from a previous checkpoint directory.",
+    )
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--logging-steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=3407)
@@ -365,6 +375,9 @@ def build_model(args: argparse.Namespace):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    if is_adapter_checkpoint(args.model_name):
+        return model, tokenizer
+
     model = FastLanguageModel.get_peft_model(
         model,
         r=args.lora_r,
@@ -387,6 +400,11 @@ def build_model(args: argparse.Namespace):
     )
 
     return model, tokenizer
+
+
+def is_adapter_checkpoint(model_name: str) -> bool:
+    model_path = Path(model_name)
+    return model_path.exists() and (model_path / "adapter_config.json").exists()
 
 
 def build_training_args(args: argparse.Namespace):
@@ -610,30 +628,47 @@ def export_gguf(model, tokenizer, args: argparse.Namespace) -> None:
 def main() -> None:
     args = build_parser().parse_args()
 
+    if args.inference_only and not (
+        args.sample_prompt or args.interactive or args.save_gguf_dir or args.push_gguf
+    ):
+        raise SystemExit(
+            "Use --sample-prompt, --interactive, --save-gguf-dir, or --push-gguf "
+            "with --inference-only."
+        )
+
     require_cuda_runtime()
     import unsloth  # noqa: F401
-    from trl import SFTTrainer
 
     model, tokenizer = build_model(args)
-    dataset = load_source_dataset(args)
-    print(f"Loaded dataset columns: {dataset.column_names}")
 
-    dataset = prepare_dataset(dataset, tokenizer, args)
-    print(f"Prepared dataset columns: {dataset.column_names}")
+    if not args.inference_only:
+        from trl import SFTTrainer
 
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=dataset,
-        dataset_text_field="text",
-        max_seq_length=args.max_seq_length,
-        dataset_num_proc=args.dataset_num_proc,
-        packing=False,
-        data_collator=build_data_collator(tokenizer, args),
-        args=build_training_args(args),
-    )
+        dataset = load_source_dataset(args)
+        print(f"Loaded dataset columns: {dataset.column_names}")
 
-    trainer.train()
+        dataset = prepare_dataset(dataset, tokenizer, args)
+        print(f"Prepared dataset columns: {dataset.column_names}")
+
+        trainer = SFTTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=dataset,
+            dataset_text_field="text",
+            max_seq_length=args.max_seq_length,
+            dataset_num_proc=args.dataset_num_proc,
+            packing=False,
+            data_collator=build_data_collator(tokenizer, args),
+            args=build_training_args(args),
+        )
+
+        trainer.train(
+            resume_from_checkpoint=(
+                str(args.resume_from_checkpoint)
+                if args.resume_from_checkpoint is not None
+                else None
+            )
+        )
 
     if args.sample_prompt or args.interactive:
         response_end_marker = resolve_response_end_marker(

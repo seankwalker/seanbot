@@ -2,6 +2,7 @@ import unittest
 
 from contextlib import redirect_stdout
 from io import StringIO
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -9,6 +10,7 @@ from training.train_unsloth import (
     build_stopping_criteria,
     find_last_subsequence,
     generate_response,
+    is_adapter_checkpoint,
     prepare_dataset,
     render_messages,
     render_prompt,
@@ -104,6 +106,15 @@ class PromptRenderingTests(unittest.TestCase):
         tokenizer = FakeTokenizer()
 
         self.assertIsNone(build_stopping_criteria(tokenizer, "<eos>"))
+
+    def test_is_adapter_checkpoint_detects_local_lora_checkpoint(self):
+        with TemporaryDirectory() as temp_dir:
+            self.assertFalse(is_adapter_checkpoint(temp_dir))
+
+            with open(f"{temp_dir}/adapter_config.json", "w", encoding="utf-8"):
+                pass
+
+            self.assertTrue(is_adapter_checkpoint(temp_dir))
 
     def test_find_last_subsequence_prefers_actual_response_header(self):
         self.assertEqual(3, find_last_subsequence([1, 2, 3, 1, 2, 3], [1, 2]))

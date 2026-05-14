@@ -97,6 +97,20 @@ python training/train_unsloth.py \
 Type `quit`, `exit`, or a blank line to stop. Tune generation with
 `--temperature`, `--top-p`, and `--no-do-sample`.
 
+If training finished and you exited interactive mode, reload the saved LoRA
+checkpoint without retraining:
+
+```bash
+python training/train_unsloth.py \
+  --model-name /tmp/seanbot-vibe/checkpoint-60 \
+  --inference-only \
+  --interactive
+```
+
+Use `--resume-from-checkpoint /path/to/checkpoint` only when continuing an
+interrupted training run; use `--inference-only` for vibe testing an existing
+checkpoint.
+
 ## Fast Smoke Test
 
 Use a tiny subset and a few steps to verify imports, dataset rendering,
