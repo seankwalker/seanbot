@@ -55,6 +55,9 @@ uv run main.py \
 - `--db-path`: override the default `~/Library/Messages/chat.db` path.
 - `--min-date` / `--max-date`: filter by local date or ISO datetime.
 - `--min-chars` / `--max-chars`: drop turns outside a length range.
+- `--min-output-chars` / `--max-output-chars`: apply a separate length range
+  to your response turns. Use this to keep short prompts while dropping terse
+  training targets.
 - `--max-pairs-per-chat`: cap each chat's contribution after filtering. The
   most recent usable pairs are kept.
 - `--strip-urls`: remove URLs while preserving the rest of the message style.
@@ -77,6 +80,19 @@ uv run main.py \
 Group chats are supported by `chat_identifier`, but all non-you messages are
 grouped as the prompt side. For cleaner tone modeling, start with 1:1 chats and
 add group chats only after manually reviewing samples.
+
+For experiments that should reduce low-information replies, keep prompt
+filtering permissive and raise only the output threshold:
+
+```bash
+uv run main.py \
+  --chat-ids-file chat_ids.txt \
+  --limit 5000 \
+  --max-pairs-per-chat 300 \
+  --min-chars 2 \
+  --min-output-chars 12 \
+  --jsonl-output exp-b-balanced-min-response.jsonl
+```
 
 ## Output Formats
 

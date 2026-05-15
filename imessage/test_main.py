@@ -61,6 +61,28 @@ class PairingTests(unittest.TestCase):
         self.assertEqual(dropped, 1)
         self.assertEqual([pair.input for pair in capped], ["middle", "new"])
 
+    def test_output_length_filter_can_be_stricter_than_prompt_filter(self):
+        turns = [
+            # Short prompt should be kept because --min-chars still controls prompts.
+            Message(1, 10, "wyd", False, "chat-a", "text"),
+            Message(2, 11, "ok", True, "chat-a", "text"),
+            Message(3, 12, "lol", False, "chat-a", "text"),
+            Message(4, 13, "heading out soon", True, "chat-a", "text"),
+        ]
+        grouped_turns, _ = group_turns(turns, strip_urls=False)
+
+        pairs, skipped_by_length = build_training_pairs(
+            grouped_turns,
+            min_chars=2,
+            max_chars=None,
+            min_output_chars=12,
+        )
+
+        self.assertEqual(skipped_by_length, 1)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0].input, "lol")
+        self.assertEqual(pairs[0].output, "heading out soon")
+
 
 class FetchMessageTests(unittest.TestCase):
     def test_identifies_reaction_text(self):

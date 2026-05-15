@@ -17,3 +17,7 @@ chat_ids.txt
 imessage/data.csv
 training_pairs.csv
 training_pairs.jsonl
+exp-*.csv
+exp-*.jsonl
+imessage/exp-*.csv
+imessage/exp-*.jsonl

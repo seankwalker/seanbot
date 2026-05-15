@@ -401,19 +401,31 @@ def build_training_pairs(
     *,
     min_chars: int,
     max_chars: int | None,
+    min_output_chars: int | None = None,
+    max_output_chars: int | None = None,
 ) -> tuple[list[TrainingPair], int]:
     pairs: list[TrainingPair] = []
     skipped_by_length = 0
+    effective_min_output_chars = (
+        min_chars if min_output_chars is None else min_output_chars
+    )
+    effective_max_output_chars = (
+        max_chars if max_output_chars is None else max_output_chars
+    )
 
     for prompt, response in zip(turns, turns[1:]):
         if prompt.is_from_me or not response.is_from_me:
             continue
 
-        if len(prompt.text) < min_chars or len(response.text) < min_chars:
+        if len(prompt.text) < min_chars or len(response.text) < effective_min_output_chars:
             skipped_by_length += 1
             continue
-        if max_chars is not None and (
-            len(prompt.text) > max_chars or len(response.text) > max_chars
+        if max_chars is not None and len(prompt.text) > max_chars:
+            skipped_by_length += 1
+            continue
+        if (
+            effective_max_output_chars is not None
+            and len(response.text) > effective_max_output_chars
         ):
             skipped_by_length += 1
             continue
@@ -515,6 +527,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum character length for both input and output turns.",
     )
     parser.add_argument(
+        "--min-output-chars",
+        type=int,
+        help=(
+            "Minimum character length for output turns only. Defaults to "
+            "--min-chars when omitted."
+        ),
+    )
+    parser.add_argument(
+        "--max-output-chars",
+        type=int,
+        help=(
+            "Maximum character length for output turns only. Defaults to "
+            "--max-chars when omitted."
+        ),
+    )
+    parser.add_argument(
         "--max-pairs-per-chat",
         type=int,
         help="Maximum training pairs to export from each chat after filtering.",
@@ -553,6 +581,19 @@ def main() -> None:
         parser.error("--min-chars must be 0 or greater.")
     if args.max_chars is not None and args.max_chars < args.min_chars:
         parser.error("--max-chars must be greater than or equal to --min-chars.")
+    if args.min_output_chars is not None and args.min_output_chars < 0:
+        parser.error("--min-output-chars must be 0 or greater.")
+    effective_min_output_chars = (
+        args.min_chars if args.min_output_chars is None else args.min_output_chars
+    )
+    if (
+        args.max_output_chars is not None
+        and args.max_output_chars < effective_min_output_chars
+    ):
+        parser.error(
+            "--max-output-chars must be greater than or equal to the effective "
+            "minimum output length."
+        )
     if args.max_pairs_per_chat is not None and args.max_pairs_per_chat < 1:
         parser.error("--max-pairs-per-chat must be 1 or greater.")
 
@@ -608,6 +649,8 @@ def main() -> None:
                 turns,
                 min_chars=args.min_chars,
                 max_chars=args.max_chars,
+                min_output_chars=args.min_output_chars,
+                max_output_chars=args.max_output_chars,
             )
             pairs, pairs_dropped_by_cap = cap_training_pairs(
                 pairs,
