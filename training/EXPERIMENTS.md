@@ -30,8 +30,8 @@ Training setup for A/B/C comparison:
 | Run | Dataset Recipe | Tone | Coherence | Specificity | Length Fit | Not Weird | Stop Clean | Conclusion |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | A | balanced 1:1, `--min-chars 2` | 3 | 3 | 2 | 2 | 3 | 5 | Useful baseline; too terse and sometimes randomly specific. |
-| B | A + `--min-output-chars 12` | 3 | 3 | 3 | 4 | 3 | 5 | Better than A; less terse and more useful. Keep as current baseline. |
-| C | B + `--context-turns 2` | TBD | TBD | TBD | TBD | TBD | TBD | Pending. |
+| B | A + `--min-output-chars 12` | 3 | 3 | 3 | 4 | 3 | 5 | Better than A; less terse and more useful. |
+| C | B + `--context-turns 2` | 4 | 3 | 3 | 4 | 3 | 5 | Best overall so far; more conversational, but still invents context. |
 
 ## Experiment Notes
 
@@ -114,14 +114,23 @@ Risks:
 - Context may encourage transcript continuation if rendering/masking is wrong.
 - Longer examples may require more training steps or sequence length.
 
-Status:
+Observed behavior:
 
-- Pending eval.
+- Most conversational and natural of A/B/C.
+- Longer than B without obvious stopping/template regressions.
+- Better simple greetings, plans/status, logistics, and support prompts.
+- Still invents context on memory, advice, and ambiguous prompts.
+- Context improves conversational feel more than factual grounding.
+
+Conclusion:
+
+- `--context-turns 2` should become the current baseline recipe.
+- The next issue to attack is unsupported invention, not response length.
 
 ## Next Ideas
 
-- Compare C against B with the same eval prompts and decode settings.
-- If C wins, keep `--context-turns 2` in the baseline recipe.
-- If C is worse, keep B and test `--min-output-chars 20`.
+- Keep `--min-output-chars 12` and `--context-turns 2` as the current baseline recipe.
 - Add more 1:1 chats before increasing model size.
+- Add eval prompts that specifically test unsupported invention and uncertainty.
+- Consider prompt wording that encourages uncertainty when context is missing.
 - Once the dataset recipe stabilizes, try the same recipe on a larger model.
