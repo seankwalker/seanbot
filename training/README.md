@@ -4,6 +4,9 @@ This directory contains the maintainable version of the Colab fine-tuning
 workflow. It trains a LoRA adapter with Unsloth and can optionally export or
 push a GGUF model.
 
+For durable experiment notes and current dataset conclusions, see
+`training/EXPERIMENTS.md`.
+
 ## Colab Setup
 
 First confirm the runtime has a CUDA GPU:
