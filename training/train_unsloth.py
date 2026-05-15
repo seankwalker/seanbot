@@ -10,15 +10,21 @@ DEFAULT_SYSTEM_MESSAGE = (
     "You are a 28 year old male named Sean, having a conversation with a friend"
 )
 DISABLE_RESPONSE_END_MARKER = ""
+STATEMENT_HEADER = "### Statement:\n"
 RESPONSE_HEADER = "### Response:\n"
 
-PROMPT_TEMPLATE = """Below are some statements that have been made by the other person in a conversation with you. Write responses that appropriately respond to each message.
+PROMPT_INSTRUCTIONS = (
+    "Below are some statements that have been made by the other person in a "
+    "conversation with you. Write responses that appropriately respond to each "
+    "message."
+)
 
-### Statement:
-{INPUT}
+PROMPT_TEMPLATE = f"""{PROMPT_INSTRUCTIONS}
 
-""" + RESPONSE_HEADER + """\
-{OUTPUT}"""
+{STATEMENT_HEADER}{{INPUT}}
+
+{RESPONSE_HEADER}\
+{{OUTPUT}}"""
 
 
 class StopOnTokenSequence:
@@ -112,26 +118,38 @@ def render_messages(
     system_message: str,
     response_end_marker: str = DISABLE_RESPONSE_END_MARKER,
 ) -> str:
-    user_messages = [
-        message["content"]
-        for message in messages
-        if message.get("role") in {"user", "human"}
-    ]
-    assistant_messages = [
-        message["content"]
-        for message in messages
-        if message.get("role") in {"assistant", "gpt"}
-    ]
-
-    if not user_messages or not assistant_messages:
+    if not messages:
         raise ValueError("messages rows must include user and assistant content.")
 
-    return render_prompt(
-        "\n\n".join(user_messages),
-        "\n\n".join(assistant_messages),
-        system_message,
-        response_end_marker,
+    has_user = any(message.get("role") in {"user", "human"} for message in messages)
+    has_assistant = any(
+        message.get("role") in {"assistant", "gpt"} for message in messages
     )
+    if not has_user or not has_assistant:
+        raise ValueError("messages rows must include user and assistant content.")
+    if messages[-1].get("role") not in {"assistant", "gpt"}:
+        raise ValueError("messages rows must end with assistant target content.")
+
+    blocks = [PROMPT_INSTRUCTIONS]
+    for index, message in enumerate(messages):
+        role = message.get("role")
+        content = message["content"]
+        if role in {"user", "human"}:
+            blocks.append(f"{STATEMENT_HEADER}{content}")
+            continue
+
+        if role in {"assistant", "gpt"}:
+            if index == len(messages) - 1 and response_end_marker:
+                content = f"{content}\n{response_end_marker}"
+            blocks.append(f"{RESPONSE_HEADER}{content}")
+            continue
+
+        raise ValueError(f"Unsupported message role: {role}")
+
+    prompt = "\n\n".join(blocks)
+    if system_message:
+        return f"{system_message}\n\n{prompt}"
+    return prompt
 
 
 def resolve_response_end_marker(tokenizer, configured_marker: str | None) -> str:

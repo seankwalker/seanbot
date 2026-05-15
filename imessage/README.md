@@ -60,6 +60,8 @@ uv run main.py \
   training targets.
 - `--max-pairs-per-chat`: cap each chat's contribution after filtering. The
   most recent usable pairs are kept.
+- `--context-turns`: prepend up to this many previous turns to each JSONL
+  record. CSV output stays as the current prompt/response only.
 - `--strip-urls`: remove URLs while preserving the rest of the message style.
 - `--include-reactions`: keep tapbacks/reactions such as `Loved “...”`.
 - `--jsonl-output`: write chat-style JSONL records for SFT workflows.
@@ -94,6 +96,19 @@ uv run main.py \
   --jsonl-output exp-b-balanced-min-response.jsonl
 ```
 
+Experiment C adds short conversation context while keeping the same final
+assistant response as the training target:
+
+```bash
+uv run main.py \
+  --chat-ids-file chat_ids.txt \
+  --context-turns 2 \
+  --min-output-chars 12 \
+  --limit 5000 \
+  --max-pairs-per-chat 300 \
+  --jsonl-output exp-c-context-turns.jsonl
+```
+
 ## Output Formats
 
 CSV output contains:
@@ -105,8 +120,12 @@ input,output
 JSONL output contains one record per pair:
 
 ```json
-{"messages":[{"role":"user","content":"..."},{"role":"assistant","content":"..."}]}
+{"messages":[{"role":"user","content":"previous prompt"},{"role":"assistant","content":"previous response"},{"role":"user","content":"current prompt"},{"role":"assistant","content":"target response"}],"metadata":{"context_turn_count":2}}
 ```
+
+When `--context-turns` is omitted, JSONL keeps the existing one user prompt
+turn plus one assistant response turn shape. The final assistant message remains
+the training target.
 
 ## Validation
 

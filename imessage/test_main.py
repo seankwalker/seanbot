@@ -1,15 +1,21 @@
+import json
 import sqlite3
+import tempfile
+from pathlib import Path
 import unittest
 
 from imessage.main import (
     Message,
     TrainingPair,
+    build_jsonl_messages,
+    build_parser,
     build_training_pairs,
     cap_training_pairs,
     decode_attributed_body,
     fetch_messages,
     group_turns,
     is_reaction_text,
+    write_jsonl,
 )
 
 
@@ -26,6 +32,15 @@ def build_training_pair(text: str):
 
 
 class PairingTests(unittest.TestCase):
+    def test_parser_accepts_context_turns_flag(self):
+        parser = build_parser()
+
+        default_args = parser.parse_args([])
+        args = parser.parse_args(["--context-turns", "2"])
+
+        self.assertEqual(default_args.context_turns, 0)
+        self.assertEqual(args.context_turns, 2)
+
     def test_groups_consecutive_messages_and_pairs_only_other_to_me(self):
         messages = [
             Message(1, 10, "HEY!!!", False, "chat-a", "text"),
@@ -82,6 +97,79 @@ class PairingTests(unittest.TestCase):
         self.assertEqual(len(pairs), 1)
         self.assertEqual(pairs[0].input, "lol")
         self.assertEqual(pairs[0].output, "heading out soon")
+
+    def test_context_turns_prepend_previous_turns_to_jsonl_messages(self):
+        messages = [
+            Message(1, 10, "first prompt", False, "chat-a", "text"),
+            Message(2, 11, "first response", True, "chat-a", "text"),
+            Message(3, 12, "second prompt", False, "chat-a", "text"),
+            Message(4, 13, "second response", True, "chat-a", "text"),
+        ]
+        turns, _ = group_turns(messages, strip_urls=False)
+
+        pairs, skipped_by_length = build_training_pairs(
+            turns,
+            min_chars=1,
+            max_chars=None,
+            context_turns=2,
+        )
+
+        self.assertEqual(skipped_by_length, 0)
+        self.assertEqual(len(pairs), 2)
+        self.assertEqual(len(pairs[0].context_turns), 0)
+        self.assertEqual(
+            [turn.text for turn in pairs[1].context_turns],
+            ["first prompt", "first response"],
+        )
+        self.assertEqual(pairs[1].input, "second prompt")
+        self.assertEqual(pairs[1].output, "second response")
+        self.assertEqual(
+            build_jsonl_messages(pairs[1]),
+            [
+                {"role": "user", "content": "first prompt"},
+                {"role": "assistant", "content": "first response"},
+                {"role": "user", "content": "second prompt"},
+                {"role": "assistant", "content": "second response"},
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            output_path = Path(tempdir) / "pairs.jsonl"
+            write_jsonl([pairs[1]], output_path)
+            record = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(record["metadata"]["context_turn_count"], 2)
+        self.assertEqual(record["metadata"]["context_message_count"], 2)
+
+    def test_context_turns_uses_fewer_previous_turns_when_available(self):
+        messages = [
+            Message(1, 10, "prior response", True, "chat-a", "text"),
+            Message(2, 11, "current prompt", False, "chat-a", "text"),
+            Message(3, 12, "target response", True, "chat-a", "text"),
+        ]
+        turns, _ = group_turns(messages, strip_urls=False)
+
+        pairs, skipped_by_length = build_training_pairs(
+            turns,
+            min_chars=1,
+            max_chars=None,
+            context_turns=2,
+        )
+
+        self.assertEqual(skipped_by_length, 0)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(
+            [turn.text for turn in pairs[0].context_turns],
+            ["prior response"],
+        )
+        self.assertEqual(
+            build_jsonl_messages(pairs[0]),
+            [
+                {"role": "assistant", "content": "prior response"},
+                {"role": "user", "content": "current prompt"},
+                {"role": "assistant", "content": "target response"},
+            ],
+        )
 
 
 class FetchMessageTests(unittest.TestCase):

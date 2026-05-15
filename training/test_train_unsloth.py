@@ -91,9 +91,41 @@ class PromptRenderingTests(unittest.TestCase):
         self.assertIn("### Statement:\nwhat are you up to?", text)
         self.assertIn("### Response:\nnot much just chilling\n<END>", text)
 
+    def test_render_messages_preserves_context_and_marks_only_final_response(self):
+        text = render_messages(
+            [
+                {"role": "user", "content": "first prompt"},
+                {"role": "assistant", "content": "first response"},
+                {"role": "user", "content": "second prompt"},
+                {"role": "assistant", "content": "second response"},
+            ],
+            "You are Sean",
+            "<END>",
+        )
+
+        self.assertIn(
+            "### Statement:\nfirst prompt\n\n"
+            "### Response:\nfirst response\n\n"
+            "### Statement:\nsecond prompt\n\n"
+            "### Response:\nsecond response\n<END>",
+            text,
+        )
+        self.assertNotIn("first response\n<END>", text)
+
     def test_render_messages_requires_user_and_assistant(self):
         with self.assertRaises(ValueError):
             render_messages([{"role": "user", "content": "hello"}], "You are Sean")
+
+    def test_render_messages_requires_final_assistant_target(self):
+        with self.assertRaises(ValueError):
+            render_messages(
+                [
+                    {"role": "user", "content": "hello"},
+                    {"role": "assistant", "content": "hey"},
+                    {"role": "user", "content": "one more"},
+                ],
+                "You are Sean",
+            )
 
     def test_resolve_response_end_marker_defaults_to_tokenizer_eos(self):
         tokenizer = FakeTokenizer()

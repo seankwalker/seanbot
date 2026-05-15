@@ -63,6 +63,7 @@ class TrainingPair:
     response_message_count: int
     prompt_start_date: int
     response_start_date: int
+    context_turns: tuple[Turn, ...] = ()
 
 
 def parse_apple_timestamp(value: str, *, end_of_day: bool = False) -> int:
@@ -403,7 +404,11 @@ def build_training_pairs(
     max_chars: int | None,
     min_output_chars: int | None = None,
     max_output_chars: int | None = None,
+    context_turns: int = 0,
 ) -> tuple[list[TrainingPair], int]:
+    if context_turns < 0:
+        raise ValueError("context_turns must be 0 or greater.")
+
     pairs: list[TrainingPair] = []
     skipped_by_length = 0
     effective_min_output_chars = (
@@ -413,7 +418,7 @@ def build_training_pairs(
         max_chars if max_output_chars is None else max_output_chars
     )
 
-    for prompt, response in zip(turns, turns[1:]):
+    for index, (prompt, response) in enumerate(zip(turns, turns[1:])):
         if prompt.is_from_me or not response.is_from_me:
             continue
 
@@ -430,6 +435,9 @@ def build_training_pairs(
             skipped_by_length += 1
             continue
 
+        context_start = max(0, index - context_turns)
+        previous_turns = turns[context_start:index] if context_turns else []
+
         pairs.append(
             TrainingPair(
                 chat_identifier=prompt.chat_identifier,
@@ -439,6 +447,7 @@ def build_training_pairs(
                 response_message_count=response.message_count,
                 prompt_start_date=prompt.start_date,
                 response_start_date=response.start_date,
+                context_turns=tuple(previous_turns),
             )
         )
 
@@ -463,18 +472,35 @@ def write_csv(pairs: list[TrainingPair], output_path: Path) -> None:
             writer.writerow([pair.input, pair.output])
 
 
+def turn_to_chat_message(turn: Turn) -> dict[str, str]:
+    role = "assistant" if turn.is_from_me else "user"
+    return {"role": role, "content": turn.text}
+
+
+def build_jsonl_messages(pair: TrainingPair) -> list[dict[str, str]]:
+    messages = [turn_to_chat_message(turn) for turn in pair.context_turns]
+    messages.extend(
+        [
+            {"role": "user", "content": pair.input},
+            {"role": "assistant", "content": pair.output},
+        ]
+    )
+    return messages
+
+
 def write_jsonl(pairs: list[TrainingPair], output_path: Path) -> None:
     with output_path.open("w", encoding="utf-8") as file:
         for pair in pairs:
             record = {
-                "messages": [
-                    {"role": "user", "content": pair.input},
-                    {"role": "assistant", "content": pair.output},
-                ],
+                "messages": build_jsonl_messages(pair),
                 "metadata": {
                     "chat_identifier": pair.chat_identifier,
                     "prompt_message_count": pair.prompt_message_count,
                     "response_message_count": pair.response_message_count,
+                    "context_turn_count": len(pair.context_turns),
+                    "context_message_count": sum(
+                        turn.message_count for turn in pair.context_turns
+                    ),
                 },
             }
             file.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -548,6 +574,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum training pairs to export from each chat after filtering.",
     )
     parser.add_argument(
+        "--context-turns",
+        type=int,
+        default=0,
+        help=(
+            "Number of previous conversation turns to prepend to each JSONL "
+            "record. CSV output remains prompt/response only."
+        ),
+    )
+    parser.add_argument(
         "--strip-urls",
         action="store_true",
         help="Remove URLs during export. By default text style is preserved.",
@@ -596,6 +631,8 @@ def main() -> None:
         )
     if args.max_pairs_per_chat is not None and args.max_pairs_per_chat < 1:
         parser.error("--max-pairs-per-chat must be 1 or greater.")
+    if args.context_turns < 0:
+        parser.error("--context-turns must be 0 or greater.")
 
     chat_identifiers = read_chat_ids(args.chat_ids, args.chat_ids_file)
     if not chat_identifiers:
@@ -651,6 +688,7 @@ def main() -> None:
                 max_chars=args.max_chars,
                 min_output_chars=args.min_output_chars,
                 max_output_chars=args.max_output_chars,
+                context_turns=args.context_turns,
             )
             pairs, pairs_dropped_by_cap = cap_training_pairs(
                 pairs,
